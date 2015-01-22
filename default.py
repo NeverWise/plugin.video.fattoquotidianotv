@@ -1,6 +1,5 @@
 #!/usr/bin/python
-# -*- coding: utf-8 -*-
-import sys, re, xbmcgui, httplib#, datetime
+import re, sys, xbmcplugin, httplib#, datetime
 from neverwise import Util
 from pyamf import remoting
 
@@ -15,70 +14,73 @@ class FattoQTV(object):
     if len(self._params) == 0: # Visualizzazione del menu.
 
       # Menu.
-      lis = Util('http://tv.ilfattoquotidiano.it').getBSHtml(True)
+      lis = Util.getHtml('http://tv.ilfattoquotidiano.it', True)
       if lis != None:
-        lis = lis.find('ul', id="menu-videogallery")
+        lis = lis.find('ul', id='menu-videogallery')
         lis = lis.findAll('li', id=re.compile('menu-item-[0-9]+'))
-        items = []
         for li in lis:
           ul = li.find('ul')
           link = li.a['href']
           if ul == None and link.find('servizio-pubblico') == -1:
             title = Util.normalizeText(li.a.text)
             li = Util.createListItem(title, streamtype = 'video', infolabels = { 'title' : title })
-            items.append([{ 'id' : 'c', 'page' : link }, li, True, True])
+            xbmcplugin.addDirectoryItem(self._handle, Util.formatUrl({ 'id' : 'c', 'page' : link }), li, True)
 
         # Show items.
-        Util.addItems(self._handle, items)
+        xbmcplugin.endOfDirectory(self._handle)
 
     else:
 
-      response = Util(self._params['page']).getHtml(True)
+      response = Util.getHtml(self._params['page'], True)
       if response != None:
 
         # Check if exist additional archive.
-        archive = re.compile('<div class="go-to-archive"><h1><a href="(.+?)">').findall(response)
-        if len(archive) > 0:
-          response = Util(archive[0]).getHtml(True)
+        archive = response.find('div', 'go-to-archive')
+        if archive != None:
+          response = Util.getHtml(archive.h1.a['href'], True)
 
         if response != None:
 
           # Videos.
           if self._params['id'] == 'c': # Visualizzazione video di una categoria.
-            videos = re.compile('<div class="video-excerpt">.+?<img.+?src="(.+?)".+?/>.+?<a.+?href="(.+?)".+?>(.+?)</a>.+?(<p>.+?</p>)?</div>').findall(response)
-            items = []
-            for img, link, title, descr in videos:
-              title = Util.normalizeText(title)
-              li = Util.createListItem(title, thumbnailImage = self._normalizeImageUrl(img), streamtype = 'video', infolabels = { 'title' : title, 'plot' : Util.normalizeText(Util.trimTags(descr)) }, isPlayable = True)
-              items.append([{ 'id' : 'v', 'page' : link }, li, False, True])
+            videos = response.findAll('div', 'video-excerpt')
+            for video in videos:
+              title = Util.normalizeText(video.h2.a.text)
+              desc = video.p
+              li = Util.createListItem(title, thumbnailImage = self._normalizeImageUrl(video.img['src']), streamtype = 'video', infolabels = { 'title' : title, 'plot' : Util.normalizeText(desc.text if desc != None else '') }, isPlayable = True)
+              xbmcplugin.addDirectoryItem(self._handle, Util.formatUrl({ 'id' : 'v', 'page' : video.h2.a['href'] }), li, False)
 
             # Next page.
-            nextPage = re.compile("<span class='current'>.+?</span><a.+?href='(.+?)'.+?>(.+?)</a>").findall(response)
-            if len(nextPage) > 0:
-              items.append([{ 'id' : 'c', 'page' : nextPage[0][0] }, Util.createItemPage(Util.normalizeText(nextPage[0][1])), True, True])
+            nextPage = response.find('span', 'current')
+            if nextPage != None:
+              url = Util.formatUrl({ 'id' : 'c', 'page' : nextPage.nextSibling['href'] })
+              xbmcplugin.addDirectoryItem(self._handle, url, Util.createItemPage(Util.normalizeText(nextPage.nextSibling.text)), True)
 
             # Show items.
-            Util.addItems(self._handle, items)
+            xbmcplugin.endOfDirectory(self._handle)
 
           # Play video.
           elif self._params['id'] == 'v':
-            title = Util.normalizeText(re.compile('<h1 class="entry-title full-title">(.+?)</h1>').findall(response)[0])
-            img = self._normalizeImageUrl(re.compile('<link rel="image_src" href="(.+?)"/>').findall(response)[0])
-            descr = re.compile('<span class="content"><p>(.+?)</p>').findall(response)
-            if len(descr) > 0:
-              descr = Util.normalizeText(Util.trimTags(descr[0]))
-            else:
-              descr = None
+            title = Util.normalizeText(response.find('h1', 'entry-title full-title').text)
+            img = response.find('link', rel='image_src')['href']
+            content = response.find('span', 'content')
+            descr = None
+            if content != None:
+              descr = content.renderContents()
+              if len(descr) == 0:
+                descr = content.nextSibling.renderContents()
+              if len(descr) > 0:
+                descr = Util.normalizeText(Util.trimTags(descr))
 
             # Video del fatto.
-            videoId = re.compile('<param name="@videoPlayer" value="(.+?)"/>').findall(response)
-            if len(videoId) > 0:
+            videoId = response.find('param', { 'name' : '@videoPlayer' })
+            if videoId != None:
               playerID = 2274739660001
               publisherID = 1328010481001
               const = 'ef59d16acbb13614346264dfe58844284718fb7b'
               conn = httplib.HTTPConnection('c.brightcove.com')
               envelope = remoting.Envelope(amfVersion=3)
-              envelope.bodies.append(('/1', remoting.Request(target='com.brightcove.player.runtime.PlayerMediaFacade.findMediaById', body=[const, playerID, videoId[0], publisherID], envelope=envelope)))
+              envelope.bodies.append(('/1', remoting.Request(target='com.brightcove.player.runtime.PlayerMediaFacade.findMediaById', body=[const, playerID, videoId['value'], publisherID], envelope=envelope)))
               conn.request('POST', '/services/messagebroker/amf?playerId={0}'.format(str(playerID)), str(remoting.encode(envelope).read()), {'content-type': 'application/x-amf'})
               response = conn.getresponse().read()
               response = remoting.decode(response).bodies[0][1].body
@@ -101,14 +103,23 @@ class FattoQTV(object):
                 Util.playStream(self._handle, title, img, '{0}:1935 app={1} playpath={2}'.format(url[:index], app, playpath), 'video', { 'title' : title, 'plot' : descr })
               else:
                 Util.showVideoNotAvailableDialog()
+
+            # Altri video.
             else:
+              responseString = response.renderContents()
 
               # Video di youtube.
-              videoId = re.compile('<iframe.+?src="http://www.youtube.com/embed/(.+?)\?.+?".+?></iframe>').findall(response)
-              if len(videoId) > 0:
-                Util.playStream(self._handle, title, img, 'plugin://plugin.video.youtube/?path=/root/video&action=play_video&videoid={0}'.format(videoId[0]), 'video', { 'title' : title, 'plot' : descr })
+              if responseString.find('www.youtube.com/embed') > -1:
+                videoId = re.compile('http://www.youtube.com/embed/(.+?)\?').findall(response.find('iframe')['src'])
+                if len(videoId) > 0:
+                  Util.playStream(self._handle, title, img, 'plugin://plugin.video.youtube/play/?video_id={0}'.format(videoId[0]), 'video', { 'title' : title, 'plot' : descr })
+
+              # Video servizio pubblico.
+              elif responseString.find('meride-video-container') > -1:
+                Util.playStream(self._handle, title, img, 'plugin://plugin.video.serviziopubblico/?id=e&page={0}&title={1}&img={2}&descr={3}'.format(self._params['page'], self._stripNonAscii(title), img, self._stripNonAscii(descr)), 'video', { 'title' : title, 'plot' : descr })
+
+              # Video non gestito.
               else:
-                # Altri video non gestiti.
                 Util.showVideoNotAvailableDialog()
 
 
@@ -117,6 +128,11 @@ class FattoQTV(object):
     if index > 0:
       img = img[:index]
     return img
+
+
+  def _stripNonAscii(self, string):
+    stripped = (c for c in string if 0 < ord(c) < 127)
+    return ''.join(stripped)
 
 
 # Entry point.
