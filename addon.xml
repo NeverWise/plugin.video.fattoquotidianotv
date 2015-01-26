@@ -4,7 +4,7 @@
     <import addon="xbmc.python" version="2.1.0"/>
     <import addon="script.module.neverwise" version="1.0.4"/>
     <import addon="script.module.pyamf" version="0.6.2"/>
-    <import addon="plugin.video.youtube" version="5.0.3" optional="true"/>
+    <import addon="plugin.video.youtube" version="4.4.10" optional="true"/>
     <import addon="plugin.video.serviziopubblico" version="1.0.4" optional="true"/>
   </requires>
   <extension point="xbmc.python.pluginsource" library="default.py">
